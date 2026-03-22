@@ -492,13 +492,13 @@ func (al *AgentLoop) GetConfig() *config.Config {
 func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
 
-	// Propagate store to send_file tools in all agents.
+	// Propagate store to all registered tools that can emit media.
 	registry := al.GetRegistry()
-	registry.ForEachTool("send_file", func(t tools.Tool) {
-		if sf, ok := t.(*tools.SendFileTool); ok {
-			sf.SetMediaStore(s)
+	for _, agentID := range registry.ListAgentIDs() {
+		if agent, ok := registry.GetAgent(agentID); ok {
+			agent.Tools.SetMediaStore(s)
 		}
-	})
+	}
 }
 
 // SetTranscriber injects a voice transcriber for agent-level audio transcription.
@@ -926,13 +926,26 @@ func (al *AgentLoop) runAgentLoop(
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 3. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalContent, iteration, responseHandled, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
 	}
 
-	// If last tool had ForUser content and we already sent it, we might not need to send final response
-	// This is controlled by the tool's Silent flag and ForUser content
+	if responseHandled {
+		agent.Sessions.Save(opts.SessionKey)
+
+		if opts.EnableSummary {
+			al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
+		}
+
+		logger.InfoCF("agent", "Response already handled by tool output",
+			map[string]any{
+				"agent_id":    agent.ID,
+				"session_key": opts.SessionKey,
+				"iterations":  iteration,
+			})
+		return "", nil
+	}
 
 	// 4. Handle empty response
 	if finalContent == "" {
@@ -1030,14 +1043,57 @@ func (al *AgentLoop) handleReasoning(
 	}
 }
 
+const handledToolResponseSummary = "Requested output delivered via tool attachment."
+
+func (al *AgentLoop) buildOutboundMediaMessage(
+	channel string,
+	chatID string,
+	refs []string,
+) bus.OutboundMediaMessage {
+	parts := make([]bus.MediaPart, 0, len(refs))
+	for _, ref := range refs {
+		part := bus.MediaPart{Ref: ref}
+		if al.mediaStore != nil {
+			if _, meta, err := al.mediaStore.ResolveWithMeta(ref); err == nil {
+				part.Filename = meta.Filename
+				part.ContentType = meta.ContentType
+				part.Type = inferMediaType(meta.Filename, meta.ContentType)
+			}
+		}
+		parts = append(parts, part)
+	}
+	return bus.OutboundMediaMessage{
+		Channel: channel,
+		ChatID:  chatID,
+		Parts:   parts,
+	}
+}
+
+func (al *AgentLoop) buildArtifactTags(refs []string) []string {
+	if al.mediaStore == nil || len(refs) == 0 {
+		return nil
+	}
+
+	tags := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		localPath, meta, err := al.mediaStore.ResolveWithMeta(ref)
+		if err != nil {
+			continue
+		}
+		mime := detectMIME(localPath, meta)
+		tags = append(tags, buildPathTag(mime, localPath))
+	}
+	return tags
+}
+
 // runLLMIteration executes the LLM call loop with tool handling.
-// Returns (finalContent, iteration, error).
+// Returns (finalContent, iteration, responseHandled, error).
 func (al *AgentLoop) runLLMIteration(
 	ctx context.Context,
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
-) (string, int, error) {
+) (string, int, bool, error) {
 	iteration := 0
 	var finalContent string
 
@@ -1240,7 +1296,7 @@ func (al *AgentLoop) runLLMIteration(
 					"model":     activeModel,
 					"error":     err.Error(),
 				})
-			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", iteration, false, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		go al.handleReasoning(
@@ -1401,10 +1457,7 @@ func (al *AgentLoop) runLLMIteration(
 					}
 
 					// Determine content for the agent loop (ForLLM or error).
-					content := result.ForLLM
-					if content == "" && result.Err != nil {
-						content = result.Err.Error()
-					}
+					content := result.ContentForLLM()
 					if content == "" {
 						return
 					}
@@ -1439,8 +1492,14 @@ func (al *AgentLoop) runLLMIteration(
 		}
 		wg.Wait()
 
+		allResponsesHandled := len(agentResults) > 0
+
 		// Process results in original order (send to user, save to session)
 		for _, r := range agentResults {
+			if !r.result.ResponseHandled {
+				allResponsesHandled = false
+			}
+
 			// Send ForUser content to user immediately if not Silent
 			if !r.result.Silent && r.result.ForUser != "" && opts.SendResponse {
 				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
@@ -1455,32 +1514,33 @@ func (al *AgentLoop) runLLMIteration(
 					})
 			}
 
-			// If tool returned media refs, publish them as outbound media
+			// If tool returned media refs, publish them as outbound media only when the
+			// tool explicitly marked the user-visible delivery as already handled.
 			if len(r.result.Media) > 0 {
-				parts := make([]bus.MediaPart, 0, len(r.result.Media))
-				for _, ref := range r.result.Media {
-					part := bus.MediaPart{Ref: ref}
-					if al.mediaStore != nil {
-						if _, meta, err := al.mediaStore.ResolveWithMeta(ref); err == nil {
-							part.Filename = meta.Filename
-							part.ContentType = meta.ContentType
-							part.Type = inferMediaType(meta.Filename, meta.ContentType)
+				outboundMedia := al.buildOutboundMediaMessage(opts.Channel, opts.ChatID, r.result.Media)
+				if r.result.ResponseHandled {
+					if al.channelManager != nil {
+						if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
+							allResponsesHandled = false
+							logger.WarnCF("agent", "Synchronous media send failed, falling back to bus delivery",
+								map[string]any{
+									"agent_id": agent.ID,
+									"tool":     r.tc.Name,
+									"error":    err.Error(),
+								})
+							al.bus.PublishOutboundMedia(ctx, outboundMedia)
 						}
+					} else {
+						al.bus.PublishOutboundMedia(ctx, outboundMedia)
 					}
-					parts = append(parts, part)
 				}
-				al.bus.PublishOutboundMedia(ctx, bus.OutboundMediaMessage{
-					Channel: opts.Channel,
-					ChatID:  opts.ChatID,
-					Parts:   parts,
-				})
 			}
 
 			// Determine content for LLM based on tool result
-			contentForLLM := r.result.ForLLM
-			if contentForLLM == "" && r.result.Err != nil {
-				contentForLLM = r.result.Err.Error()
+			if len(r.result.Media) > 0 && !r.result.ResponseHandled {
+				r.result.ArtifactTags = al.buildArtifactTags(r.result.Media)
 			}
+			contentForLLM := r.result.ContentForLLM()
 
 			toolResultMsg := providers.Message{
 				Role:       "tool",
@@ -1491,6 +1551,23 @@ func (al *AgentLoop) runLLMIteration(
 
 			// Save tool result message to session
 			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+		}
+
+		if allResponsesHandled {
+			summaryMsg := providers.Message{
+				Role:    "assistant",
+				Content: handledToolResponseSummary,
+			}
+			messages = append(messages, summaryMsg)
+			agent.Sessions.AddFullMessage(opts.SessionKey, summaryMsg)
+
+			logger.InfoCF("agent", "Tool output satisfied delivery; ending turn without follow-up LLM",
+				map[string]any{
+					"agent_id":   agent.ID,
+					"iteration":  iteration,
+					"tool_count": len(agentResults),
+				})
+			return "", iteration, true, nil
 		}
 
 		// Tick down TTL of discovered tools after processing tool results.
@@ -1505,7 +1582,7 @@ func (al *AgentLoop) runLLMIteration(
 		})
 	}
 
-	return finalContent, iteration, nil
+	return finalContent, iteration, false, nil
 }
 
 // selectCandidates returns the model candidates and resolved model name to use

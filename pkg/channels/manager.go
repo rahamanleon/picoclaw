@@ -771,7 +771,7 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 			if !ok {
 				return
 			}
-			m.sendMediaWithRetry(ctx, name, w, msg)
+			_ = m.sendMediaWithRetry(ctx, name, w, msg)
 		case <-ctx.Done():
 			return
 		}
@@ -779,26 +779,31 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 }
 
 // sendMediaWithRetry sends a media message through the channel with rate limiting and
-// retry logic. If the channel does not implement MediaSender, it silently skips.
-func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMediaMessage) {
+// retry logic. It returns nil on success, or the last error after retries.
+func (m *Manager) sendMediaWithRetry(
+	ctx context.Context,
+	name string,
+	w *channelWorker,
+	msg bus.OutboundMediaMessage,
+) error {
 	ms, ok := w.ch.(MediaSender)
 	if !ok {
 		logger.DebugCF("channels", "Channel does not support MediaSender, skipping media", map[string]any{
 			"channel": name,
 		})
-		return
+		return nil
 	}
 
 	// Rate limit: wait for token
 	if err := w.limiter.Wait(ctx); err != nil {
-		return
+		return err
 	}
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		lastErr = ms.SendMedia(ctx, msg)
 		if lastErr == nil {
-			return
+			return nil
 		}
 
 		// Permanent failures — don't retry
@@ -817,7 +822,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 			case <-time.After(rateLimitDelay):
 				continue
 			case <-ctx.Done():
-				return
+				return ctx.Err()
 			}
 		}
 
@@ -826,7 +831,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		}
 	}
 
@@ -837,6 +842,7 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		"error":   lastErr.Error(),
 		"retries": maxRetries,
 	})
+	return lastErr
 }
 
 // runTTLJanitor periodically scans the typingStops and placeholders maps
@@ -1027,6 +1033,26 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 		m.sendWithRetry(ctx, msg.Channel, w, msg)
 	}
 	return nil
+}
+
+// SendMedia sends outbound media synchronously through the channel worker's
+// rate limiter and retry logic. It blocks until the media is delivered (or all
+// retries are exhausted), which preserves ordering when later agent behavior
+// depends on actual media delivery.
+func (m *Manager) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) error {
+	m.mu.RLock()
+	_, exists := m.channels[msg.Channel]
+	w, wExists := m.workers[msg.Channel]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("channel %s not found", msg.Channel)
+	}
+	if !wExists || w == nil {
+		return fmt.Errorf("channel %s has no active worker", msg.Channel)
+	}
+
+	return m.sendMediaWithRetry(ctx, msg.Channel, w, msg)
 }
 
 func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, content string) error {
