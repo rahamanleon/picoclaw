@@ -591,18 +591,20 @@ func (c *SlackConfig) SetAppToken(token string) {
 }
 
 type MatrixConfig struct {
-	Enabled            bool   `json:"enabled"                  env:"PICOCLAW_CHANNELS_MATRIX_ENABLED"`
-	Homeserver         string `json:"homeserver"               env:"PICOCLAW_CHANNELS_MATRIX_HOMESERVER"`
-	UserID             string `json:"user_id"                  env:"PICOCLAW_CHANNELS_MATRIX_USER_ID"`
+	Enabled            bool   `json:"enabled"                        env:"PICOCLAW_CHANNELS_MATRIX_ENABLED"`
+	Homeserver         string `json:"homeserver"                     env:"PICOCLAW_CHANNELS_MATRIX_HOMESERVER"`
+	UserID             string `json:"user_id"                        env:"PICOCLAW_CHANNELS_MATRIX_USER_ID"`
 	accessToken        string
-	DeviceID           string              `json:"device_id,omitempty"      env:"PICOCLAW_CHANNELS_MATRIX_DEVICE_ID"`
-	JoinOnInvite       bool                `json:"join_on_invite"           env:"PICOCLAW_CHANNELS_MATRIX_JOIN_ON_INVITE"`
-	MessageFormat      string              `json:"message_format,omitempty" env:"PICOCLAW_CHANNELS_MATRIX_MESSAGE_FORMAT"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"               env:"PICOCLAW_CHANNELS_MATRIX_ALLOW_FROM"`
+	DeviceID           string              `json:"device_id,omitempty"            env:"PICOCLAW_CHANNELS_MATRIX_DEVICE_ID"`
+	JoinOnInvite       bool                `json:"join_on_invite"                 env:"PICOCLAW_CHANNELS_MATRIX_JOIN_ON_INVITE"`
+	MessageFormat      string              `json:"message_format,omitempty"       env:"PICOCLAW_CHANNELS_MATRIX_MESSAGE_FORMAT"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"                     env:"PICOCLAW_CHANNELS_MATRIX_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"     env:"PICOCLAW_CHANNELS_MATRIX_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"           env:"PICOCLAW_CHANNELS_MATRIX_REASONING_CHANNEL_ID"`
 	secDirty           bool
+	CryptoDatabasePath string `json:"crypto_database_path,omitempty" env:"PICOCLAW_CHANNELS_MATRIX_CRYPTO_DATABASE_PATH"`
+	CryptoPassphrase   string `json:"crypto_passphrase,omitempty"    env:"PICOCLAW_CHANNELS_MATRIX_CRYPTO_PASSPHRASE"`
 }
 
 // AccessToken returns the Matrix access token

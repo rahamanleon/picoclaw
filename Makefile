@@ -17,7 +17,8 @@ LDFLAGS=-X $(CONFIG_PKG).Version=$(VERSION) -X $(CONFIG_PKG).GitCommit=$(GIT_COM
 # Go variables
 GO?=CGO_ENABLED=0 go
 WEB_GO?=$(GO)
-GOFLAGS?=-v -tags stdjson
+GO_BUILD_TAGS?=goolm,stdjson
+GOFLAGS?=-v -tags $(GO_BUILD_TAGS)
 
 # Patch MIPS LE ELF e_flags (offset 36) for NaN2008-only kernels (e.g. Ingenic X2600).
 #
@@ -221,13 +222,13 @@ clean:
 
 ## vet: Run go vet for static analysis
 vet: generate
-	@packages="$$(go list ./...)" && \
-		$(GO) vet $$(printf '%s\n' "$$packages" | grep -v '^github.com/sipeed/picoclaw/web/')
+	@packages="$$($(GO) list $(GOFLAGS) ./...)" && \
+		$(GO) vet $(GOFLAGS) $$(printf '%s\n' "$$packages" | grep -v '^github.com/sipeed/picoclaw/web/')
 	@cd web/backend && $(WEB_GO) vet ./...
 
 ## test: Test Go code
 test: generate
-	@$(GO) test $$(go list ./... | grep -v github.com/sipeed/picoclaw/web/)
+	@$(GO) test $(GOFLAGS) $$($(GO) list $(GOFLAGS) ./... | grep -v github.com/sipeed/picoclaw/web/)
 	@cd web && make test
 
 ## fmt: Format Go code
@@ -236,11 +237,11 @@ fmt:
 
 ## lint: Run linters
 lint:
-	@$(GOLANGCI_LINT) run
+	@CGO_ENABLED=0 $(GOLANGCI_LINT) run --build-tags $(GO_BUILD_TAGS)
 
 ## fix: Fix linting issues
 fix:
-	@$(GOLANGCI_LINT) run --fix
+	@CGO_ENABLED=0 $(GOLANGCI_LINT) run --fix --build-tags $(GO_BUILD_TAGS)
 
 ## deps: Download dependencies
 deps:

@@ -113,6 +113,8 @@ func DefaultConfig() *Config {
 					Enabled: true,
 					Text:    "Thinking... 💭",
 				},
+				CryptoDatabasePath: "",
+				CryptoPassphrase:   "",
 			},
 			LINE: LINEConfig{
 				Enabled:      false,
