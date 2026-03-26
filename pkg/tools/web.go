@@ -43,7 +43,9 @@ var (
 	reBlankLines = regexp.MustCompile(`\n{3,}`)
 
 	// DuckDuckGo result extraction
-	reDDGLink    = regexp.MustCompile(`<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>`)
+	reDDGLink = regexp.MustCompile(
+		`<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>`,
+	)
 	reDDGSnippet = regexp.MustCompile(`<a class="result__snippet[^"]*".*?>([\s\S]*?)</a>`)
 )
 
@@ -210,7 +212,12 @@ type BraveSearchProvider struct {
 	client  *http.Client
 }
 
-func (p *BraveSearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *BraveSearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := fmt.Sprintf("https://api.search.brave.com/res/v1/web/search?q=%s&count=%d",
 		url.QueryEscape(query), count)
 	if freshness := mapBraveFreshness(rangeCode); freshness != "" {
@@ -304,7 +311,12 @@ type TavilySearchProvider struct {
 	client  *http.Client
 }
 
-func (p *TavilySearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *TavilySearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := p.baseURL
 	if searchURL == "" {
 		searchURL = "https://api.tavily.com/search"
@@ -410,7 +422,12 @@ type DuckDuckGoSearchProvider struct {
 	client *http.Client
 }
 
-func (p *DuckDuckGoSearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *DuckDuckGoSearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", url.QueryEscape(query))
 	if dateFilter := mapDuckDuckGoDateFilter(rangeCode); dateFilter != "" {
 		searchURL += "&df=" + url.QueryEscape(dateFilter)
@@ -437,7 +454,11 @@ func (p *DuckDuckGoSearchProvider) Search(ctx context.Context, query string, cou
 	return p.extractResults(string(body), count, query)
 }
 
-func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query string) (string, error) {
+func (p *DuckDuckGoSearchProvider) extractResults(
+	html string,
+	count int,
+	query string,
+) (string, error) {
 	// Simple regex based extraction for DDG HTML
 	// Strategy: Find all result containers or key anchors directly
 
@@ -505,7 +526,12 @@ type PerplexitySearchProvider struct {
 	client  *http.Client
 }
 
-func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *PerplexitySearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := "https://api.perplexity.ai/chat/completions"
 
 	var lastErr error
@@ -525,8 +551,12 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 					"content": "You are a search assistant. Provide concise search results with titles, URLs, and brief descriptions in the following format:\n1. Title\n   URL\n   Description\n\nDo not add extra commentary.",
 				},
 				{
-					"role":    "user",
-					"content": fmt.Sprintf("Search for: %s. Provide up to %d relevant results.", query, count),
+					"role": "user",
+					"content": fmt.Sprintf(
+						"Search for: %s. Provide up to %d relevant results.",
+						query,
+						count,
+					),
 				},
 			},
 			"max_tokens": 1000,
@@ -540,7 +570,12 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 			return "", fmt.Errorf("failed to marshal request: %w", err)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", searchURL, strings.NewReader(string(payloadBytes)))
+		req, err := http.NewRequestWithContext(
+			ctx,
+			"POST",
+			searchURL,
+			strings.NewReader(string(payloadBytes)),
+		)
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
@@ -590,7 +625,11 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 			return fmt.Sprintf("No results for: %s", query), nil
 		}
 
-		return fmt.Sprintf("Results for: %s (via Perplexity)\n%s", query, searchResp.Choices[0].Message.Content), nil
+		return fmt.Sprintf(
+			"Results for: %s (via Perplexity)\n%s",
+			query,
+			searchResp.Choices[0].Message.Content,
+		), nil
 	}
 
 	return "", fmt.Errorf("all api keys failed, last error: %w", lastErr)
@@ -600,7 +639,12 @@ type SearXNGSearchProvider struct {
 	baseURL string
 }
 
-func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *SearXNGSearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := fmt.Sprintf("%s/search?q=%s&format=json&categories=general",
 		strings.TrimSuffix(p.baseURL, "/"),
 		url.QueryEscape(query))
@@ -669,7 +713,12 @@ type GLMSearchProvider struct {
 	client       *http.Client
 }
 
-func (p *GLMSearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *GLMSearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := p.baseURL
 	if searchURL == "" {
 		searchURL = "https://open.bigmodel.cn/api/paas/v4/web_search"
@@ -753,7 +802,12 @@ type BaiduSearchProvider struct {
 	client  *http.Client
 }
 
-func (p *BaiduSearchProvider) Search(ctx context.Context, query string, count int, rangeCode string) (string, error) {
+func (p *BaiduSearchProvider) Search(
+	ctx context.Context,
+	query string,
+	count int,
+	rangeCode string,
+) (string, error) {
 	searchURL := p.baseURL
 	if searchURL == "" {
 		searchURL = "https://qianfan.baidubce.com/v2/ai_search/web_search"
@@ -1197,7 +1251,12 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			return ErrorResult(fmt.Sprintf("failed to read response: size exceeded %d bytes limit", t.fetchLimitBytes))
+			return ErrorResult(
+				fmt.Sprintf(
+					"failed to read response: size exceeded %d bytes limit",
+					t.fetchLimitBytes,
+				),
+			)
 		}
 		return ErrorResult(err.Error())
 	}
@@ -1247,7 +1306,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		// If the charset is not utf-8, we might have to convert the bodyStr
 		// before passing it to the HTML/Markdown parser
 		if strings.ToLower(charset) != "utf-8" {
-			logger.WarnCF("tool", "Note: the content is not in UTF-8", map[string]any{"charset": charset})
+			logger.WarnCF(
+				"tool",
+				"Note: the content is not in UTF-8",
+				map[string]any{"charset": charset},
+			)
 		}
 	}
 
@@ -1391,7 +1454,11 @@ func newSafeDialContext(
 				continue
 			}
 			attempted++
-			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ipAddr.IP.String(), port))
+			conn, err := dialer.DialContext(
+				ctx,
+				network,
+				net.JoinHostPort(ipAddr.IP.String(), port),
+			)
 			if err == nil {
 				return conn, nil
 			}
@@ -1399,10 +1466,17 @@ func newSafeDialContext(
 		}
 
 		if attempted == 0 {
-			return nil, fmt.Errorf("all resolved addresses for %s are private, restricted, or not whitelisted", host)
+			return nil, fmt.Errorf(
+				"all resolved addresses for %s are private, restricted, or not whitelisted",
+				host,
+			)
 		}
 		if lastErr != nil {
-			return nil, fmt.Errorf("failed connecting to public addresses for %s: %w", host, lastErr)
+			return nil, fmt.Errorf(
+				"failed connecting to public addresses for %s: %w",
+				host,
+				lastErr,
+			)
 		}
 		return nil, fmt.Errorf("failed connecting to public addresses for %s", host)
 	}
