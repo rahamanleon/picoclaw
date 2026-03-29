@@ -178,3 +178,30 @@ Generalist.
 		t.Fatalf("did not expect discovery section for singleton registry, got %q", systemPrompt)
 	}
 }
+
+func TestAgentRegistry_ListAgentsFallsBackToFirstNonEmptyAgentLine(t *testing.T) {
+	workspace := setupWorkspace(t, map[string]string{
+		"AGENT.md": `---
+name: Research Agent
+---
+
+
+First useful line.
+Second line.
+`,
+	})
+	defer cleanupWorkspace(t, workspace)
+
+	cfg := testCfg([]config.AgentConfig{
+		{ID: "research", Default: true, Workspace: workspace},
+	})
+
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	descriptor, ok := registry.GetAgentDescriptor("research")
+	if !ok || descriptor == nil {
+		t.Fatal("expected research descriptor lookup to succeed")
+	}
+	if descriptor.Description != "First useful line." {
+		t.Fatalf("descriptor.Description = %q, want %q", descriptor.Description, "First useful line.")
+	}
+}

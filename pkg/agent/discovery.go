@@ -99,12 +99,26 @@ func descriptorIdentity(agentID string, definition AgentContextDefinition) (stri
 	}
 
 	if description == "" &&
-		definition.Source == AgentDefinitionSourceAgents &&
 		definition.Agent != nil {
-		description = firstMeaningfulParagraph(definition.Agent.Body)
+		if definition.Source == AgentDefinitionSourceAgent {
+			description = firstNonEmptyLine(definition.Agent.Body)
+		} else if definition.Source == AgentDefinitionSourceAgents {
+			description = firstMeaningfulParagraph(definition.Agent.Body)
+		}
 	}
 
 	return name, description
+}
+
+func firstNonEmptyLine(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func firstMeaningfulParagraph(content string) string {
