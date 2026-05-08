@@ -172,6 +172,13 @@ func (r *ToolRegistry) toolAllowedLocked(name string) bool {
 	if r.allowlist == nil {
 		return true
 	}
+	if isToolDiscoveryToolName(name) {
+		// Discovery tools are part of the MCP control plane: they must remain
+		// available whenever configured so deferred MCP tools can still be
+		// unlocked. Per-agent allowlists still apply to the hidden MCP tools
+		// themselves during RegisterHidden.
+		return true
+	}
 	_, ok := r.allowlist[strings.ToLower(strings.TrimSpace(name))]
 	return ok
 }
