@@ -1,6 +1,7 @@
 package toolshared
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -11,14 +12,20 @@ func TestDiffResult_UserVisibleUnifiedDiff(t *testing.T) {
 	if result == nil {
 		t.Fatal("DiffResult() returned nil")
 	}
-	if result.ForLLM != result.ForUser {
-		t.Fatalf("expected ForLLM and ForUser to match, got %q vs %q", result.ForLLM, result.ForUser)
-	}
 	if result.Silent {
 		t.Fatal("expected DiffResult to be user-visible")
 	}
 	if result.IsError {
 		t.Fatal("expected DiffResult to be successful")
+	}
+	if result.ForLLM == result.ForUser {
+		t.Fatal("expected compact model context instead of duplicating the full diff")
+	}
+	if len(result.ForLLM) >= len(result.ForUser) {
+		t.Fatalf("expected ForLLM to stay smaller than ForUser, got %d vs %d", len(result.ForLLM), len(result.ForUser))
+	}
+	if result.ForLLM != "File edited: /tmp/example.txt" {
+		t.Fatalf("expected compact summary in ForLLM, got %q", result.ForLLM)
 	}
 
 	for _, want := range []string{
@@ -97,6 +104,43 @@ func TestBuildUnifiedDiff_UsesNormalizedDisplayPaths(t *testing.T) {
 		if !strings.Contains(diff, want) {
 			t.Fatalf("buildUnifiedDiff() missing %q:\n%s", want, diff)
 		}
+	}
+}
+
+func TestDiffResult_SkipsPreviewForLargeFiles(t *testing.T) {
+	before := bytes.Repeat([]byte("a"), maxDiffInputBytes+1)
+	after := bytes.Repeat([]byte("b"), maxDiffInputBytes+1)
+
+	result := DiffResult("big.txt", before, after)
+
+	if !result.Silent {
+		t.Fatal("expected large diff previews to be skipped silently")
+	}
+	if result.ForUser != "" {
+		t.Fatalf("expected no user-facing preview when skipped, got %q", result.ForUser)
+	}
+	if !strings.Contains(result.ForLLM, diffPreviewSkippedMessage) {
+		t.Fatalf("expected skipped-preview note, got %q", result.ForLLM)
+	}
+}
+
+func TestDiffResult_TruncatesLargeUserPreview(t *testing.T) {
+	after := []byte(strings.Repeat("abcd", maxUserDiffPreviewBytes/4) + "\n")
+
+	result := DiffResult("preview.txt", []byte("before\n"), after)
+
+	if result.Silent {
+		t.Fatal("expected preview to remain user-visible below the input caps")
+	}
+	if !strings.Contains(result.ForUser, diffPreviewTruncatedNote) {
+		t.Fatalf("expected truncated preview note, got %q", result.ForUser)
+	}
+	if !strings.Contains(result.ForLLM, diffPreviewTruncatedNote) {
+		t.Fatalf("expected model summary to mention truncation, got %q", result.ForLLM)
+	}
+	if len(result.ForLLM) >= len(result.ForUser) {
+		t.Fatalf("expected ForLLM to remain smaller than ForUser, "+
+			"got %d vs %d", len(result.ForLLM), len(result.ForUser))
 	}
 }
 

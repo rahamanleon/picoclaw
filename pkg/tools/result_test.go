@@ -44,9 +44,6 @@ func TestSilentResult(t *testing.T) {
 func TestDiffResult(t *testing.T) {
 	result := DiffResult("pkg/tools/fs/edit.go", []byte("hello world\n"), []byte("hello universe\n"))
 
-	if result.ForLLM != result.ForUser {
-		t.Fatalf("Expected ForLLM and ForUser to match, got %q vs %q", result.ForLLM, result.ForUser)
-	}
 	if result.Silent {
 		t.Error("Expected Silent to be false")
 	}
@@ -55,6 +52,12 @@ func TestDiffResult(t *testing.T) {
 	}
 	if result.Async {
 		t.Error("Expected Async to be false")
+	}
+	if result.ForLLM == result.ForUser {
+		t.Fatalf("Expected ForLLM to omit the full diff, got %q", result.ForLLM)
+	}
+	if len(result.ForLLM) >= len(result.ForUser) {
+		t.Fatalf("Expected ForLLM to stay smaller than ForUser, got %d vs %d", len(result.ForLLM), len(result.ForUser))
 	}
 
 	for _, want := range []string{
@@ -79,6 +82,9 @@ func TestDiffResult_NormalizesAbsolutePathsAndHandlesNoOpChanges(t *testing.T) {
 	}
 	if !strings.Contains(result.ForUser, "(no content change)") {
 		t.Fatalf("Expected no-content-change marker, got %q", result.ForUser)
+	}
+	if !strings.Contains(result.ForLLM, "(no content change)") {
+		t.Fatalf("Expected compact no-op summary in ForLLM, got %q", result.ForLLM)
 	}
 }
 
