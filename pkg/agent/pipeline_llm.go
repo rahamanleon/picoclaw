@@ -3,10 +3,13 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -154,6 +157,25 @@ func (p *Pipeline) CallLLM(
 
 		al.activeRequests.Add(1)
 		defer al.activeRequests.Done()
+
+		// --- NVIDIA MiniMax direct override ---
+		if ts.agent.Provider == "nvidia_minimax" {
+			apiBase := ts.agent.APIBase
+			if apiBase == "" {
+				apiBase = "https://integrate.api.nvidia.com/v1"
+			}
+			reqURL := strings.TrimSuffix(apiBase, "/") + "/chat/completions"
+			modelTarget := ts.agent.Model
+			if modelTarget == "" {
+				modelTarget = "minimaxai/minimax-m2.7"
+			}
+			var apiKey string
+			if len(ts.agent.APIKeys) > 0 {
+				apiKey = ts.agent.APIKeys[0]
+			}
+			return executeDirectPayloadCall(providerCtx, reqURL, modelTarget, apiKey, messagesForCall)
+		}
+		// --- end override ---
 
 		if len(exec.activeCandidates) > 1 && p.Fallback != nil {
 			fbResult, fbErr := p.Fallback.Execute(
@@ -571,4 +593,67 @@ func (p *Pipeline) CallLLM(
 	}
 
 	return ControlToolLoop, nil
+}
+
+// executeDirectPayloadCall makes a raw HTTP call to an OpenAI-compatible endpoint.
+func executeDirectPayloadCall(ctx context.Context, apiURL, modelName, apiKey string, messages []providers.Message) (*providers.LLMResponse, error) {
+	// Convert providers.Message to OpenAI format
+	openaiMsgs := make([]map[string]string, len(messages))
+	for i, msg := range messages {
+		openaiMsgs[i] = map[string]string{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+	}
+	payload := map[string]interface{}{
+		"model":    modelName,
+		"messages": openaiMsgs,
+		"stream":   false,
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return nil, fmt.Errorf("no choices in response")
+	}
+
+	return &providers.LLMResponse{
+		Content:      result.Choices[0].Message.Content,
+		FinishReason: "stop",
+	}, nil
 }
